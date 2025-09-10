@@ -1,0 +1,66 @@
+name: Windows Server 2025 RDP with Tailscale VPN and Admin runneradmin user
+
+on:
+  workflow_dispatch:
+
+jobs:
+  setup_rdp:
+    runs-on: windows-2025
+    timeout-minutes: 360
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Connect to Tailscale using Auth Key
+      uses: tailscale/github-action@v3
+      with:
+        authkey: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+    - name: Enable Remote Desktop and configure firewall
+      shell: powershell
+      run: |
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name 'fDenyTSConnections' -Value 0
+        Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'
+        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name 'UserAuthentication' -Value 1
+        Set-Service -Name TermService -StartupType Automatic
+        Start-Service -Name TermService
+
+        # Menține UAC activ pentru prompturi manuale
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "ConsentPromptBehaviorAdmin" -Value 2
+        Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "EnableLUA" -Value 1
+
+    - name: Generate random password and create runneradmin user with admin rights
+      id: gen_pass
+      shell: powershell
+      run: |
+        $username = "runneradmin"
+        $userExists = Get-LocalUser -Name $username -ErrorAction SilentlyContinue
+        $chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+        $passwordPlain = -join ((1..16) | ForEach-Object { $chars[(Get-Random -Maximum $chars.Length)] })
+        $securePass = ConvertTo-SecureString $passwordPlain -AsPlainText -Force
+
+        if (-not $userExists) {
+          New-LocalUser -Name $username -Password $securePass -FullName "Runner Admin" -Description "Admin user for RDP"
+          Add-LocalGroupMember -Group "Administrators" -Member $username
+        } else {
+          Set-LocalUser -Name $username -Password $securePass
+        }
+
+        echo "rdp_password=$passwordPlain" >> $env:GITHUB_OUTPUT
+        echo "username=$username" >> $env:GITHUB_OUTPUT
+
+    - name: Show Tailscale IP and RDP credentials
+      shell: powershell
+      run: |
+        $tailscaleIp = tailscale ip -4
+        Write-Host "======================================"
+        Write-Host "Tailscale VPN IP for RDP: $tailscaleIp"
+        Write-Host "Username: ${{ steps.gen_pass.outputs.username }}"
+        Write-Host "Password: ${{ steps.gen_pass.outputs.rdp_password }}"
+        Write-Host "======================================"
+
+    - name: Keep session alive for 6 hours for RDP access
+      shell: powershell
+      run: Start-Sleep -Seconds 21600
+      
