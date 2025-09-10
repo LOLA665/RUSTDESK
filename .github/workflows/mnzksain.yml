@@ -1,0 +1,44 @@
+name: Create Paperspace VM with Tailscale VPN
+
+on:
+  workflow_dispatch:
+    inputs:
+      machine_type:
+        description: 'Machine type'
+        default: 'P4000'
+        required: true
+      container:
+        description: 'Container image'
+        default: 'mcr.microsoft.com/windows/servercore:ltsc2019'
+        required: true
+
+jobs:
+  create_vm:
+    runs-on: ubuntu-latest
+    env:
+      PAPERSACE_API_KEY: ${{ secrets.PAPERSPACE_API_KEY }}
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+    steps:
+      - name: Install Gradient CLI
+        run: |
+          pip install gradient-cli
+
+      - name: Login Gradient CLI
+        run: |
+          gradient login --key ${{ secrets.PAPERSPACE_API_KEY }}
+
+      - name: Create Paperspace Machine
+        id: create_machine
+        run: |
+          response=$(gradient machines create --machineType ${{ github.event.inputs.machine_type }} \
+            --container ${{ github.event.inputs.container }} \
+            --script "powershell -Command \"iex ((New-Object System.Net.WebClient).DownloadString('https://tailscale.com/install.ps1')); tailscale up --authkey $TAILSCALE_AUTHKEY --accept-routes; Start-Sleep -Seconds 21600; Stop-Computer -Force\"" \
+            --name "auto-vm-$(date +%s)" --json)
+          echo "$response"
+          ip=$(echo $response | jq -r '.ipAddresses[0]')
+          echo "machine_ip=$ip" >> $GITHUB_OUTPUT
+
+      - name: Output IP
+        run: echo "Connect with Tailscale VPN to IP: ${{ steps.create_machine.outputs.machine_ip }}"
+        
