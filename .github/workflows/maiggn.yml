@@ -1,0 +1,42 @@
+name: Create Paperspace VM with Tailscale VPN
+
+on:
+  workflow_dispatch:
+    inputs:
+      machine_type:
+        description: 'Paperspace machine type (ex: P4000)'
+        required: true
+        default: 'P4000'
+      container:
+        description: 'Container image to use'
+        required: true
+        default: 'mcr.microsoft.com/windows/servercore:ltsc2019'
+
+jobs:
+  create_vm:
+    runs-on: ubuntu-latest
+    env:
+      PAPERSPACE_API_KEY: ${{ secrets.PAPERSPACE_API_KEY }}
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+
+    steps:
+      - name: Install Paperspace CLI
+        run: |
+          curl -fsSL https://pspace-cli.storage.googleapis.com/latest/install.sh | bash
+
+      - name: Create Paperspace Machine
+        id: create_machine
+        run: |
+          machine_info=$(pspace machines create --machineType ${{ github.event.inputs.machine_type }} \
+            --container ${{ github.event.inputs.container }} --script "powershell -Command ^
+            \"iex ((New-Object System.Net.WebClient).DownloadString('https://tailscale.com/install.ps1')); ^
+            tailscale up --authkey $TAILSCALE_AUTHKEY --accept-routes; Start-Sleep -Seconds 21600; Stop-Computer -Force\"" \
+            --machineName "auto-vm-$(date +%s)" --json)
+          echo "$machine_info"
+          machine_ip=$(echo "$machine_info" | jq -r '.ipAddresses[0]')
+          echo "machine_ip=$machine_ip" >> $GITHUB_OUTPUT
+
+      - name: Output Machine IP
+        run: |
+          echo "Connect to your VM using IP: ${{ steps.create_machine.outputs.machine_ip }} via Tailscale VPN"
+          
