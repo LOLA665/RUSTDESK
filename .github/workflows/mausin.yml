@@ -1,1 +1,19 @@
-
+version: 1
+workflow:
+  - name: Windows VM with Tailscale VPN
+    kind: machine
+    machine:
+      type: C6i.8xlarge  # Exemplu tip puternic - schimbă după nevoie
+      gpu: none
+      memory_gb: 32
+      disk_size_gb: 888
+      container: mcr.microsoft.com/windows/servercore:ltsc2019
+      command: powershell -Command "
+        iex ((New-Object System.Net.WebClient).DownloadString('https://tailscale.com/install.ps1'));
+        tailscale up --authkey ${{ secrets.TAILSCALE_AUTHKEY }} --accept-routes;
+        Start-Sleep -Seconds 21600;
+        Stop-Computer -Force
+      "
+    environment:
+      TAILSCALE_AUTHKEY: ${{ secrets.TAILSCALE_AUTHKEY }}
+      
